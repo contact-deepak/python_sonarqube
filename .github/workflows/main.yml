@@ -1,26 +1,58 @@
-name: Build
+name: SonarQube Analysis
 
 on:
   push:
     branches:
-      - master
+      - main  
 
 jobs:
-  build:
-    name: Build and analyze
+  sonar_scan:
     runs-on: ubuntu-latest
     
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # Shallow clones should be disabled for a better relevancy of analysis
-      - uses: sonarsource/sonarqube-scan-action@master
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-      # If you wish to fail your job when the Quality Gate is red, uncomment the
-      # following lines. This would typically be used to fail a deployment.
-      # - uses: sonarsource/sonarqube-quality-gate-action@master
-      #   timeout-minutes: 5
-      #   env:
-      #     SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Get Public IP
+      id: get-ip
+      run: echo "RUNNER_IP=$(curl -s ifconfig.me)" >> $GITHUB_ENV
+
+  
+    - name: Start SonarQube via API
+      run: |
+        curl -X POST https://ftqp5itzh1.execute-api.ap-south-1.amazonaws.com/default/sonarqube_control \
+        -H "Content-Type: application/json" \
+        -d '{"control":"start"}'
+    - name: Wait for SonarQube to Start
+      run: sleep 20
+
+    - name: Connect to EC2 & Start SonarQube
+      uses: appleboy/ssh-action@v0.1.5
+      with:
+        host: ${{ secrets.EC2_PUBLIC_IP }}
+        username: sonar
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        port: 22
+        script: |
+          cd /opt/sonarqube-10.6.0.92116/bin/linux-x86-64
+          ./sonar.sh start
+    - name: Install SonarQube Scanner
+      run: npm install -g sonarqube-scanner
+
+    - name: Run SonarQube Scan
+      run: |
+        sonar-scanner \
+        -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY }} \
+        -Dsonar.sources=. \
+        -Dsonar.host.url=http://${{ secrets.EC2_PUBLIC_IP }}:9000 \
+        -Dsonar.login=${{ secrets.SONAR_TOKEN }}
+    - name: Fetch SonarQube Issues
+      run: |
+        curl -u ${{ secrets.SONAR_TOKEN }}: \
+        "http://${{ secrets.EC2_PUBLIC_IP }}:9000/api/issues/search?componentKeys=${{ secrets.SONAR_PROJECT_KEY }}&types=BUG,VULNERABILITY,CODE_SMELL" \
+        -o sonarqube_issues.json
+    - name: Upload SonarQube Report
+      uses: actions/upload-artifact@v4
+      with:
+        name: sonarqube-report
+        path: sonarqube_issues.json    
