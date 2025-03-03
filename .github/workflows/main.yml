@@ -62,8 +62,50 @@ jobs:
         curl -u ${{ secrets.SONAR_TOKEN }}: \
         "http://${{ secrets.EC2_PUBLIC_IP }}:9000/api/issues/search?componentKeys=${{ secrets.SONAR_PROJECT_KEY }}&types=BUG,VULNERABILITY,CODE_SMELL" \
         -o sonarqube_issues.json
-    - name: Upload SonarQube Report
-      uses: actions/upload-artifact@v4
+    - name: Prettify JSON Report
+      run: |
+        cat sonarqube_issues.json | jq '.' > sonarqube-report.json
+    - name: Upload Pretty Report as Artifact
+      uses: actions/upload-artifact@v3
       with:
         name: sonarqube-report
-        path: sonarqube_issues.json    
+        path: sonarqube-report.json    
+          
+    - name: Send email on success or failure
+      if: always()  # ensures that this step runs no matter what
+      uses: dawidd6/action-send-mail@v3
+      with:
+        server_address: smtp.gmail.com
+        server_port: 465
+        username: ${{ secrets.SMTP_USERNAME }}
+        password: ${{ secrets.SMTP_PASSWORD }}      # app password from google account
+        subject: "GitHub Action Pipeline Status - ${{ job.status }}"
+        body: |
+          The GitHub Action for your project has completed.
+          
+          Status: ${{ job.status }} 
+          Commit: ${{ github.sha }}
+          Repository: ${{ github.repository }}
+          Workflow: ${{ github.workflow }}
+          Check the details at: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        to: ${{ secrets.RECIPIENT_EMAIL }}
+        from: ${{ secrets.SMTP_USERNAME }}
+        secure: true
+        attachments: sonarqube-report.json    
+
+    - name: Connect to EC2 and run commands
+      uses: appleboy/ssh-action@v0.1.5
+      with:
+        host: ${{ secrets.EC2_PUBLIC_IP }}  # Your EC2 instance public IP or DNS
+        username: sonar  # SSH user for your EC2 instance
+        key: ${{ secrets.SSH_PRIVATE_KEY }}  # The SSH private key added as a GitHub secret
+        port: 22
+        script: |
+          cd /opt/sonarqube-10.6.0.92116/bin/linux-x86-64
+          ./sonar.sh stop
+ 
+    - name: Call External API
+      run: |
+        curl -X POST https://ftqp5itzh1.execute-api.ap-south-1.amazonaws.com/default/sonarqube_control \
+        -H "Content-Type: application/json" \
+        -d '{"control":"stop"}'   
