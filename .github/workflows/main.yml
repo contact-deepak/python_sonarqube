@@ -9,21 +9,29 @@ jobs:
   build:
     name: Build and analyze
     runs-on: ubuntu-latest
-    
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Repository
+        uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Ensures better analysis by SonarQube
+          fetch-depth: 0  # Ensures full history for better analysis
+
+      - name: Install SonarScanner Manually
+        run: |
+          curl -Lo sonar-scanner.zip https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip
+          unzip sonar-scanner.zip
+          mv sonar-scanner-5.0.1.3006-linux sonar-scanner
+          chmod +x sonar-scanner/bin/sonar-scanner
+          echo "$PWD/sonar-scanner/bin" >> $GITHUB_PATH
+
+      - name: Verify SonarScanner Installation
+        run: sonar-scanner --version
 
       - name: Run SonarQube Scan
-        uses: sonarsource/sonarqube-scan-action@master
+        run: |
+          sonar-scanner \
+            -Dsonar.host.url=${{ secrets.SONAR_HOST_URL }} \
+            -Dsonar.login=${{ secrets.SONAR_TOKEN }}
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-
-      # Uncomment this step to fail the job if the Quality Gate is not met
-      # - name: Check Quality Gate
-      #   uses: sonarsource/sonarqube-quality-gate-action@master
-      #   timeout-minutes: 5
-      #   env:
-      #     SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
