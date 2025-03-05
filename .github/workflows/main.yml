@@ -1,111 +1,27 @@
-name: SonarQube Analysis
+name: Build
 
 on:
   push:
     branches:
-      - master
-      
+      - main
+
+
 jobs:
-  sonar_scan:
+  build:
+    name: Build and analyze
     runs-on: ubuntu-latest
     
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Get Public IP
-      id: get-ip
-      run: echo "RUNNER_IP=$(curl -s ifconfig.me)" >> $GITHUB_ENV
-
-    - name: Start SonarQube via API
-      run: |
-        curl -X POST https://ftqp5itzh1.execute-api.ap-south-1.amazonaws.com/default/sonarqube_control \
-        -H "Content-Type: application/json" \
-        -d '{"control":"start"}'
-        
-    - name: Wait for SonarQube to Start
-      run: sleep 20
-
-    - name: Configure AWS CLI & Update Security Group
-      env:
-        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        AWS_REGION: ap-south-1
-      run: |
-        aws configure set aws_access_key_id $AWS_ACCESS_KEY_ID
-        aws configure set aws_secret_access_key $AWS_SECRET_ACCESS_KEY
-        aws configure set default.region $AWS_REGION
-        aws ec2 authorize-security-group-ingress --group-id ${{ secrets.AWS_SECURITY_GROUP_ID }} --protocol tcp --port 9000 --cidr "${{ env.RUNNER_IP }}/32"      
-
-    - name: Connect to EC2 & Start SonarQube
-      uses: appleboy/ssh-action@v0.1.5
-      with:
-        host: ${{ secrets.EC2_PUBLIC_IP }}
-        username: sonar
-        key: ${{ secrets.SSH_PRIVATE_KEY }}
-        port: 22
-        script: |
-          cd /opt/sonarqube-10.6.0.92116/bin/linux-x86-64
-          ./sonar.sh start
-    - name: Install SonarQube Scanner
-      run: npm install -g sonarqube-scanner
-
-    - name: Run SonarQube Scan
-      run: |
-        sonar-scanner \
-        -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY }} \
-        -Dsonar.sources=. \
-        -Dsonar.host.url=http://${{ secrets.EC2_PUBLIC_IP }}:9000 \
-        -Dsonar.login=${{ secrets.SONAR_TOKEN }}
-    - name: Fetch SonarQube Issues
-      run: |
-        curl -u ${{ secrets.SONAR_TOKEN }}: \
-        "http://${{ secrets.EC2_PUBLIC_IP }}:9000/api/issues/search?componentKeys=${{ secrets.SONAR_PROJECT_KEY }}&types=BUG,VULNERABILITY,CODE_SMELL" \
-        -o sonarqube_issues.json
-    - name: Prettify JSON Report
-      run: |
-        cat sonarqube_issues.json | jq '.' > sonarqube-report.json
-    - name: Upload Pretty Report as Artifact
-      uses: actions/upload-artifact@v3
-      with:
-        name: sonarqube-report
-        path: sonarqube-report.json    
-          
-    - name: Send email on success or failure
-      if: always()  # ensures that this step runs no matter what
-      uses: dawidd6/action-send-mail@v3
-      with:
-        server_address: smtp.gmail.com
-        server_port: 465
-        username: ${{ secrets.SMTP_USERNAME }}
-        password: ${{ secrets.SMTP_PASSWORD }}      # app password from google account
-        subject: "GitHub Action Pipeline Status - ${{ job.status }}"
-        body: |
-          The GitHub Action for your project has completed.
-          
-          Status: ${{ job.status }} 
-          Commit: ${{ github.sha }}
-          Repository: ${{ github.repository }}
-          Workflow: ${{ github.workflow }}
-          Check the details at: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        to: ${{ secrets.RECIPIENT_EMAIL }}
-        from: ${{ secrets.SMTP_USERNAME }}
-        secure: true
-        attachments: sonarqube-report.json    
-
-    - name: Connect to EC2 and run commands
-      uses: appleboy/ssh-action@v0.1.5
-      with:
-        host: ${{ secrets.EC2_PUBLIC_IP }}  # Your EC2 instance public IP or DNS
-        username: sonar  # SSH user for your EC2 instance
-        key: ${{ secrets.SSH_PRIVATE_KEY }}  # The SSH private key added as a GitHub secret
-        port: 22
-        script: |
-          cd /opt/sonarqube-10.6.0.92116/bin/linux-x86-64
-          ./sonar.sh stop
- 
-    - name: Call External API
-      run: |
-        curl -X POST https://ftqp5itzh1.execute-api.ap-south-1.amazonaws.com/default/sonarqube_control \
-        -H "Content-Type: application/json" \
-        -d '{"control":"stop"}'   
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Shallow clones should be disabled for a better relevancy of analysis
+      - uses: SonarSource/sonarqube-scan-action@v4
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.EC2_PUBLIC_IP }}
+      # If you wish to fail your job when the Quality Gate is red, uncomment the
+      # following lines. This would typically be used to fail a deployment.
+      # - uses: SonarSource/sonarqube-quality-gate-action@v1
+      #   timeout-minutes: 5
+      #   env:
+      #     SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
